@@ -29,6 +29,7 @@ Photos.origin = 'http://localhost:6330'
 
 local Photos = {
 	origin = 'http://localhost:6330',
+	announce = 'notification',
 }
 
 ---@vararg MediaItemKey? a list of properties to retrieve, nil for all
@@ -69,11 +70,25 @@ getProps(]] .. hs.json.encode{ ... } .. ')'
 	return array, err
 end
 
----@type fun(table, function): table
-local imap = hs.fnutils.imap
-
-local function notify(message, subtitle)
+local announce = {}
+function announce.notify(message, subtitle)
 	hs.notify.show('Apple Photos', subtitle or '', message)
+end
+
+-- an alias because I often con't remember which name I chose to use
+announce.notification = announce.notify
+function announce.alert(message, subtitle)
+	-- print(string.format([[
+	hs.osascript.javascript(string.format([[
+Application("Photos").includeStandardAdditions = true;
+Application("Photos").displayAlert('Apple Photos', {
+	message: %s,
+	as: "informational",
+	buttons: ["OK","Dismiss"],
+	defaultButton: "OK",
+	cancelButton: "Dismiss", // so escape key closes the alert too!
+	givingUpAfter: 5
+})]], hs.json.encode{ message }:sub(2, -2)))
 end
 
 local function altText(self)
@@ -89,6 +104,11 @@ local function toMarkdown(self)
 		self.id:gsub('/.*$', '')
 	)
 end
+
+-- alias this so we can annotate it
+---@type fun(table, function): table
+local imap = hs.fnutils.imap
+
 ---@rerturn integer? number of items copied, nil on error
 function Photos:copySelectionAsMarkdown()
 	local selection = Photos.selection() -- all properties
@@ -97,14 +117,14 @@ function Photos:copySelectionAsMarkdown()
 		hs.pasteboard.setContents(table.concat(
 			imap(selection, toMarkdown), '\n'
 		))
-		notify(string.format(
+		announce[self.announce](string.format(
 			'Copied %d %s to clipboard.',
 			#selection,
 			#selection == 1 and 'markdown link' or
 			'markdown links'
 		))
 	else
-		notify'Nothing selected to copy.'
+		announce[self.announce]'Nothing selected to copy.'
 	end
 	return #selection
 end
