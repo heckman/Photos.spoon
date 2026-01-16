@@ -115,7 +115,7 @@ end
 ---@return PhotosServer
 function Photos:bindHotkeys(mapping)
 	local spec = {
-		self.copySelectionAsMarkdown,
+		copyMarkdown = self.copySelectionAsMarkdown,
 	}
 	hs.spoons.bindHotkeysToSpec(spec, mapping)
 	return self
