@@ -1,0 +1,64 @@
+#!/bin/sh
+# Copyright 2026 Erik Ben Heckman <erik@heckman.ca>
+# spdx-license-identifier: MIT
+#
+#   photos-selection -- version 0.0.2
+#
+# prints a json array of the media items
+# currently selected in the Photos Application.
+#
+# requires Hammerspoon <https://www.hammerspoon.org>
+# and the PhotosServer Spoon
+#   <https://github.com/heckman/PhotosServer.spoon>
+#
+# and any posixish awk.
+
+readonly usage="
+Usage: photos-selection [limit]
+
+       Prints a json array to stdout of the media items
+       currently selected in the Photos Application.
+
+       It will only print the properties for the first
+       'limit' selected items, if specified.
+"
+
+case "$1" in
+	--help|-h)
+		echo "$usage"
+		exit 0
+		;;
+        ''|0)
+		action="toPropertyMaps"
+		;;
+	*[!0123456789]*)
+		echo "Error: limit must be an integer." >&2
+		echo "$usage" >&2
+		exit 1
+		;;
+	*)
+		action="limit($1,propertyMap)"
+		;;
+esac
+
+# timeout after 15 mintutes (my libary of 55k items takes 11 minutes)
+hs -q -t 900 -c "
+hs.json.encode(
+	(function(...)
+		result, err = hs.loadSpoon'Photos'.JXA(...)
+		return result and result or err
+	end)('selection $action'),
+	true
+)
+" |
+awk ' # valid output begins with [
+NR==1 && /^[^[]/ {
+	err=1
+}
+{
+	if (err) { print | "cat 1>&2" } else { print }
+}
+END {
+	if (err) exit 1
+}
+'
