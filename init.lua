@@ -8,7 +8,9 @@ local Photos = {
 	__index = Photos,
 	origin = 'http://localhost:6330',
 	announce = 'notification',
+	selectionLimit = 100,
 }
+
 
 Photos.JXA = dofile(hs.spoons.resourcePath'jxa.lua')
 
@@ -36,6 +38,10 @@ Photos.JXA = dofile(hs.spoons.resourcePath'jxa.lua')
 ---@alias Photos.MediaItem.uuid string  Photos.uuid that ends in 001
 ---@alias Photos.Album.uuid string  Photos.uuid that ends in 040
 
+---@alias MediaItemList
+---@field itemId fun(index, crop): string
+---@field albumId fun(index,crop): string
+
 ---this specifies a media item, and optionally also an album it is being viewed within
 
 
@@ -46,6 +52,8 @@ end
 
 -- an alias because I often con't remember which name I chose to use
 announce.notification = announce.notify
+
+
 function announce.alert(message, subtitle)
 	-- print(string.format([[
 	hs.osascript.javascript(string.format([[
@@ -68,9 +76,12 @@ end
 local function toMarkdown(self)
 	D(self)
 	return string.format(
-		'![%s](%s/%s)', altText(self), Photos.origin,
+		'![%s](%s/%s/%s/%s)',
+		altText(self), self.origin,
 		-- id doesn't require the /... suffix
-		self.id:gsub('/.*$', '')
+		self.id:gsub('/.*$', ''),
+		os.date('%Y-%m-%d', self.date),
+		self.filename
 	)
 end
 
@@ -78,14 +89,27 @@ end
 ---@type fun(table, function): table
 local imap = hs.fnutils.imap
 
-Photos.selectionProperties = function ()
-	return Photos.JXA'selection|toPropertyMaps'
+
+
+function Photos:selectionProperties()
+	return Photos.JXA(
+		'selection limit(' .. self.selectionLimit .. ',property)'
+	)
+end
+
+---@param url string
+function Photos:openUrl(url)
+	if not self.origin then return nil, 'origin not set' end
+	local pattern = '^' .. self.origin .. '/([^/]+)'
+	local uuid = string.match(url, pattern)
+	if not uuid then return nil, 'poorly-formatted URL' end
+	return Photos.JXA('byId(' .. uuid .. ') open')
 end
 
 ---@rerturn integer? number of items copied, nil on error
 function Photos:copySelectionAsMarkdown()
-	local selection = Photos.selectionProperties() -- all properties
-	if selection == nil then return nil end -- unexpected error
+	local selection = self:selectionProperties()
+	if selection == nil then return nil end
 	if #selection > 0 then
 		hs.pasteboard.setContents(table.concat(
 			imap(selection, toMarkdown), '\n'
@@ -101,6 +125,12 @@ function Photos:copySelectionAsMarkdown()
 	end
 	return #selection
 end
+
+function Photos:Init() return self end
+
+function Photos:Start() return self end
+
+function Photos:Stop() return self end
 
 -- This method will be removed
 -- when photosApplication is moved to its own spoon
