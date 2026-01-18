@@ -75,12 +75,11 @@ return setmetatable(JXA,
 				)
 			)
 
-			print(jxa)
+			print('JXA TO EXECUTE=> ' .. jxa and jxa or 'NIL')
 			local ok, result, err = hs.osascript.javascript(
 				jxa
 			)
-			if ok then return ok, err end
-			return result
+			return result, err
 		end,
 		---@type fun(table,string): any
 		__index = function (self, key)
