@@ -4,10 +4,13 @@ Photos = {}
 ---this can be different from the host:port settings--it is where photos should
 ---be expected to be found. For instance, I use `http://photos.local`.
 
-Photos.__index = Photos
+local Photos = {
+	__index = Photos,
+	origin = 'http://localhost:6330',
+	announce = 'notification',
+}
 
-Photos.origin = 'http://localhost:6330'
-
+Photos.JXA = dofile(hs.spoons.resourcePath'jxa.lua')
 
 ---@class MediaItem
 ---@field keywords string[] | nil?
@@ -27,48 +30,14 @@ Photos.origin = 'http://localhost:6330'
 ---| 'keywords' | 'name' | 'description' | 'favorite' | 'date' | 'id'
 ---| 'height' | 'width' | 'filename' | 'altitude' | 'size' | 'location'
 
-local Photos = {
-	origin = 'http://localhost:6330',
-	announce = 'notification',
-}
+---@alias Photos.uuid string
+---uuids maatch [0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}/L[0-9]{2}/[0-9]{3}
+---the last three characters indicate that the object is a media item 001 or an album 040
+---@alias Photos.MediaItem.uuid string  Photos.uuid that ends in 001
+---@alias Photos.Album.uuid string  Photos.uuid that ends in 040
 
----@vararg MediaItemKey? a list of properties to retrieve, nil for all
----@return {}|[MediaItem]? selection empty table if no selection, nil on error
----@return string|table error raw data string or error table returned by osascript
-function Photos.selection(...)
-	local _, array, err = hs.osascript.javascript(
-		[[
-const getProp=(item,propName)=>{
-	let value
-	try {
-		value = item[propName]()
-	}
-	catch {
-		value = Application("Photos").mediaItems.byId(
-			Automation.getDisplayString(item).match(
-				/mediaItems\.byId\("([^"]+)"\)/
-			)[1]
-		)[propName]()
-	}
-	if ( value?.date ) {
-		value.date=Math.floor(value.date.getTime()/1000)
-	} else if ( propName =="date") {
-		value=Math.floor(value.getTime()/1000)
-	}
-	return value
-}
-const getProps=(propNames)=> Application("Photos").selection().map(
-	(item) => propNames.length ? propNames.reduce(
-		(values, propName) => {
-			values[propName]=getProp(item,propName)
-			return values
-		}, {}
-	) : getProp(item,"properties")
-)
-getProps(]] .. hs.json.encode{ ... } .. ')'
-	)
-	return array, err
-end
+---this specifies a media item, and optionally also an album it is being viewed within
+
 
 local announce = {}
 function announce.notify(message, subtitle)
@@ -109,9 +78,13 @@ end
 ---@type fun(table, function): table
 local imap = hs.fnutils.imap
 
+Photos.selectionProperties = function ()
+	return Photos.JXA'selection|toPropertyMaps'
+end
+
 ---@rerturn integer? number of items copied, nil on error
 function Photos:copySelectionAsMarkdown()
-	local selection = Photos.selection() -- all properties
+	local selection = Photos.selectionProperties() -- all properties
 	if selection == nil then return nil end -- unexpected error
 	if #selection > 0 then
 		hs.pasteboard.setContents(table.concat(
