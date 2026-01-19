@@ -24,8 +24,8 @@ local Photos = {
 
 
 ---- Photos.JXA = dofile(hs.spoons.resourcePath'jxa.lua')
-local jxa_exec = dofile(hs.spoons.resourcePath'jxa-light.lua')
-Photos.jxa = jxa_exec
+
+Photos.jxa = dofile(hs.spoons.resourcePath'jxa.lua')
 
 ---@class MediaItem
 ---@field keywords string[] | nil?
@@ -93,19 +93,31 @@ end
 --
 -- This should sort chronologically, grouped by day/camera.
 --
--- I've separated date and filename with a space so it can be
--- used in a search query without much parsing.
+-- When the server can't find a uuid, it uses it as a search query,
+-- after replacing all . and ~ chatacters with spaces.
 --
 -- I've removed the extension from the filename because Apple Photos
 -- converts formats on export, so the extension may not be accurate.
 -- combined with the date,
---
-function Photos:url(mediaItem)
+local function urlByIdDateFile(self, mediaItem)
 	return (self.origin or '.')                -- cwd if no origin
 	    .. '/' .. mediaItem.id:gsub('/.*$', '') -- drop uuid labels
 	    .. '/' .. os.date('%Y-%m-%d', mediaItem.date) -- no time
-	    .. ' ' .. mediaItem.filename:gsub('%..*', '') -- no extension
+	    .. '.' ..
+	    mediaItem.filename:gsub('%.[^.]*$', '') -- no extension
 end
+
+-- another option for url-generation, without using UUIDs.
+-- it's almost as fast to search Photos for date and filename
+-- as it is to fetch by uuid.
+local function urlByDateFile(self, mediaItem)
+	return (self.origin or '.')                -- cwd if no origin
+	    .. '/' .. os.date('%Y-%m-%d', mediaItem.date) -- no time
+	    .. '.' ..
+	    mediaItem.filename:gsub('%.[^.]*$', ''):gsub('^[A-Z]+_', '')
+end
+
+Photos.url = urlByDateFile
 
 function Photos:toMarkdown(mediaItem)
 	local alt = self:altText(mediaItem)
@@ -120,7 +132,7 @@ local imap = hs.fnutils.imap
 
 
 function Photos:selectionProperties()
-	return jxa_exec(
+	return self.jxa(
 		'selection().limitedMap('
 		.. self.selectionLimit
 		.. ',properties);'
@@ -131,12 +143,23 @@ end
 function Photos:openUrl(url)
 	if not self.origin then return nil, 'origin not set' end
 	local pattern = '^' .. self.origin .. '/([^/]+)'
-	local uuid = string.match(url, pattern)
-	if not uuid then return nil, 'poorly-formatted URL' end
-	---- return Photos.JXA('byId(' .. uuid .. ') open')
-	return jxa_exec(
-		'itemById("' .. uuid .. '").spotlight();activate();'
+	local identifier = string.match(url, pattern)
+	if not identifier then return nil, 'poorly-formatted URL' end
+	identifier = hs.json.encode{
+		(identifier:gsub('[~.+]', ' ')),
+	}:sub(2, -2)
+	local result, err = self.jxa([[
+try{
+	itemById(]] .. identifier .. [[).spotlight();activate()
+} catch {
+	search(]] .. identifier .. [[)[0].spotlight();activate()
+}]]
 	)
+	if not result then
+		print('cannot open ' .. identifier)
+		announce[self.announce]('Cannot open ' .. identifier)
+	end
+	return result
 end
 
 ---@rerturn integer? number of items copied, nil on error

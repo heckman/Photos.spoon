@@ -20,6 +20,7 @@ selection=()=>( (selection) => {
 	}
 })( App.selection() );
 activate=()=>App.activate();
+search=(q)=>App.search({for:q});
 itemById=(id)=>App.mediaItems.byId(id);
 nullify=(_)=>null;
 identify=(x)=>x;
