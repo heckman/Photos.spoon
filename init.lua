@@ -23,7 +23,9 @@ local Photos = {
 ---@field selectionLimit integer the maximum number of items to process from a selection. Default: `100`
 
 
-Photos.JXA = dofile(hs.spoons.resourcePath'jxa.lua')
+---- Photos.JXA = dofile(hs.spoons.resourcePath'jxa.lua')
+local jxa_exec = dofile(hs.spoons.resourcePath'jxa-light.lua')
+Photos.jxa = jxa_exec
 
 ---@class MediaItem
 ---@field keywords string[] | nil?
@@ -78,20 +80,37 @@ Application("Photos").displayAlert('Apple Photos', {
 })]], hs.json.encode{ message }:sub(2, -2)))
 end
 
-local function altText(self)
-	return self.name or self.description
-	    or self.keywords and self.keywords[1]
-	    or self.filename
+function Photos:altText(mediaItem)
+	return mediaItem.name
+	    or mediaItem.description
+	    or mediaItem.keywords and mediaItem.keywords[1]
+	    or mediaItem.filename:gsub('%..*', '')
 end
-local function toMarkdown(self)
-	return string.format(
-		'![%s](%s/%s/%s/%s)',
-		altText(self), self.origin,
-		-- id doesn't require the /... suffix
-		self.id:gsub('/.*$', ''),
-		os.date('%Y-%m-%d', self.date),
-		self.filename
-	)
+
+-- The server only looks at the first 32 characters of the url,
+-- expected the uuid. I've included date and basefilename, because
+-- the mediaItem can be found with a search in case the UUIDs change.
+--
+-- This should sort chronologically, grouped by day/camera.
+--
+-- I've separated date and filename with a space so it can be
+-- used in a search query without much parsing.
+--
+-- I've removed the extension from the filename because Apple Photos
+-- converts formats on export, so the extension may not be accurate.
+-- combined with the date,
+--
+function Photos:url(mediaItem)
+	return (self.origin or '.')                -- cwd if no origin
+	    .. '/' .. mediaItem.id:gsub('/.*$', '') -- drop uuid labels
+	    .. '/' .. os.date('%Y-%m-%d', mediaItem.date) -- no time
+	    .. ' ' .. mediaItem.filename:gsub('%..*', '') -- no extension
+end
+
+function Photos:toMarkdown(mediaItem)
+	local alt = self:altText(mediaItem)
+	local url = self:url(mediaItem)
+	return '![' .. alt .. '](' .. url .. ')'
 end
 
 -- alias this so we can annotate it
@@ -101,8 +120,10 @@ local imap = hs.fnutils.imap
 
 
 function Photos:selectionProperties()
-	return Photos.JXA(
-		'selection limit(' .. self.selectionLimit .. ',property)'
+	return jxa_exec(
+		'selection().limitedMap('
+		.. self.selectionLimit
+		.. ',properties);'
 	)
 end
 
@@ -112,7 +133,10 @@ function Photos:openUrl(url)
 	local pattern = '^' .. self.origin .. '/([^/]+)'
 	local uuid = string.match(url, pattern)
 	if not uuid then return nil, 'poorly-formatted URL' end
-	return Photos.JXA('byId(' .. uuid .. ') open')
+	---- return Photos.JXA('byId(' .. uuid .. ') open')
+	return jxa_exec(
+		'itemById("' .. uuid .. '").spotlight();activate();'
+	)
 end
 
 ---@rerturn integer? number of items copied, nil on error
@@ -121,7 +145,11 @@ function Photos:copySelectionAsMarkdown()
 	if selection == nil then return nil end
 	if #selection > 0 then
 		hs.pasteboard.setContents(table.concat(
-			imap(selection, toMarkdown), '\n'
+			imap(selection,
+				function (item)
+					return self:toMarkdown(
+						item)
+				end), '\n'
 		))
 		announce[self.announce](string.format(
 			'Copied %d %s to clipboard.',

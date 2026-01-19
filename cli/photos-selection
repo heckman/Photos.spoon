@@ -13,6 +13,8 @@
 #
 # and any posixish awk.
 
+default_limit=1000
+
 readonly usage="
 Usage: photos-selection [limit]
 
@@ -20,7 +22,10 @@ Usage: photos-selection [limit]
        currently selected in the Photos Application.
 
        It will only print the properties for the first
-       'limit' selected items, if specified.
+       'limit' selected items. Default is $default_limit.
+       Specify 0 to remove the limit, but be warned, my
+       library of ~55k items takes 11 minutes to process.
+
 "
 
 case "$1" in
@@ -28,8 +33,11 @@ case "$1" in
 		echo "$usage"
 		exit 0
 		;;
-        ''|0)
-		action="toPropertyMaps"
+        '')
+		map="limitedMap($default_limit,properties)"
+		;;
+	0)
+		map="map(properties)"
 		;;
 	*[!0123456789]*)
 		echo "Error: limit must be an integer." >&2
@@ -37,17 +45,17 @@ case "$1" in
 		exit 1
 		;;
 	*)
-		action="limit($1,propertyMap)"
+		map="limitedMap($1,properties)"
 		;;
 esac
 
 # timeout after 15 mintutes (my libary of 55k items takes 11 minutes)
 hs -q -t 900 -c "
 hs.json.encode(
-	(function(...)
-		result, err = hs.loadSpoon'Photos'.JXA(...)
+	(function(jxa)
+		local result, err = hs.loadSpoon'Photos'.jxa(jxa)
 		return result and result or err
-	end)('selection $action'),
+	end)('selection().$map'),
 	true
 )
 " |
