@@ -110,7 +110,8 @@ return setmetatable(JXA,
 					function (a) return self[a] end
 				)
 			)
-			print('JXA TO EXECUTE=> ' .. jxa and jxa or 'NIL')
+			print('Photos.JXA: ' ..
+				(jxa and jxa or 'NIL'))
 			local ok, result, err = jxaExec(
 				jxa
 			)
@@ -119,14 +120,12 @@ return setmetatable(JXA,
 		end,
 		__index = function (self, key)
 			local parts = split(key, '[(,)]')
-			D(parts)
 			local ok, result, err = pcall(
 				function (fun, ...)
 					return self[fun](...)
 				end,
 				table.unpack(parts, 1, #parts - 1)
 			)
-			D(ok, result, err)
 			return ok and result or key
 		end,
 	}

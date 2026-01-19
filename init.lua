@@ -55,7 +55,6 @@ announce.notification = announce.notify
 
 
 function announce.alert(message, subtitle)
-	-- print(string.format([[
 	hs.osascript.javascript(string.format([[
 Application("Photos").includeStandardAdditions = true;
 Application("Photos").displayAlert('Apple Photos', {
@@ -74,7 +73,6 @@ local function altText(self)
 	    or self.filename
 end
 local function toMarkdown(self)
-	D(self)
 	return string.format(
 		'![%s](%s/%s/%s/%s)',
 		altText(self), self.origin,
