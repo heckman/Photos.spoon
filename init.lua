@@ -1,15 +1,26 @@
 Photos = {}
+
+local Photos = {
+	name = 'Photos',
+	version = '0.2.0',
+	author = 'Erik Ben Heckman <erik@heckman.ca>',
+	description =
+	'Copies, and opens, HTTP addresses for media items in Apple Photos.',
+	homepage = 'https://github.com/Heckman/Photos.spoon',
+	license = 'MIT - https://opensource.org/licenses/MIT',
+	-- default config:
+	origin = 'http://localhost:6330',
+	announce = 'notification',
+	selectionLimit = 100,
+
+}
+
 ---@class Photos
 ---@field origin string? the origin of the Photos App. Default: `http://localhost:6330`
 ---this can be different from the host:port settings--it is where photos should
 ---be expected to be found. For instance, I use `http://photos.local`.
-
-local Photos = {
-	__index = Photos,
-	origin = 'http://localhost:6330',
-	announce = 'notification',
-	selectionLimit = 100,
-}
+---@field announce 'alert'|'notification' the method to use to announce actions. Default: `notification`
+---@field selectionLimit integer the maximum number of items to process from a selection. Default: `100`
 
 
 Photos.JXA = dofile(hs.spoons.resourcePath'jxa.lua')
