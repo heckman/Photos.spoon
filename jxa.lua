@@ -1,5 +1,5 @@
 return function (jxaCode)
-	local header = [[
+	local script = [[
 App=Application("Photos");
 selection=()=>( (selection) => {
 	if (selection.length !== 1) return selection
@@ -35,9 +35,8 @@ Array.prototype.limitedMap=function(limit,fun=identify,alt=nullify){
 		(i,n) => (n<limit) ? fun(i) : alt(i)
 	);
 };
-]]
-	local script = header .. jxaCode
-	print(script)
+]] .. jxaCode
+	-- print(script)
 	local ok, res, err = hs.osascript.javascript(script)
 	return res or nil, err
 end

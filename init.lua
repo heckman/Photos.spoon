@@ -1,5 +1,3 @@
-Photos = {}
-
 local Photos = {
 	name = 'Photos',
 	version = '0.2.0',
@@ -8,12 +6,15 @@ local Photos = {
 	'Copies, and opens, HTTP addresses for media items in Apple Photos.',
 	homepage = 'https://github.com/Heckman/Photos.spoon',
 	license = 'MIT - https://opensource.org/licenses/MIT',
+	--
 	-- default config:
 	origin = 'http://localhost:6330',
-	announce = 'notification',
-	selectionLimit = 100,
-
+	announce = 'notification', -- notification or alert
+	selectionLimit = 100, -- should me much smaller if using short URLs
+	imagePrexixes = { 'IMG_', 'IMAG', 'MVI_', 'Dscn', 'Picture_' },
+	useShortUrls = false, -- true is slower, but produces prettier URLs
 }
+
 
 ---@class Photos
 ---@field origin string? the origin of the Photos App. Default: `http://localhost:6330`
@@ -25,9 +26,7 @@ local Photos = {
 
 ---- Photos.JXA = dofile(hs.spoons.resourcePath'jxa.lua')
 
-Photos.jxa = dofile(hs.spoons.resourcePath'jxa.lua')
-
----@class MediaItem
+---@class Photos.MediaItem
 ---@field keywords string[] | nil?
 ---@field name string? -- AKA the title
 ---@field description string?
@@ -51,78 +50,129 @@ Photos.jxa = dofile(hs.spoons.resourcePath'jxa.lua')
 ---@alias Photos.MediaItem.uuid string  Photos.uuid that ends in 001
 ---@alias Photos.Album.uuid string  Photos.uuid that ends in 040
 
----@alias MediaItemList
----@field itemId fun(index, crop): string
----@field albumId fun(index,crop): string
-
 ---this specifies a media item, and optionally also an album it is being viewed within
 
 
-local announce = {}
-function announce.notify(message, subtitle)
+---An osascript.javascript  wrapper that provides common jxa functions
+---
+---@return any|nil result always nil when unsuccessful
+---the first return value will also be nil on a successful 'null' result
+---@return nil|table error-table when unsuccessful
+Photos.jxa = dofile(hs.spoons.resourcePath'jxa.lua')
+
+
+
+local announcers = {}
+
+function announcers.notify(message, subtitle)
 	hs.notify.show('Apple Photos', subtitle or '', message)
 end
 
 -- an alias because I often con't remember which name I chose to use
-announce.notification = announce.notify
-
-
-function announce.alert(message, subtitle)
-	hs.osascript.javascript(string.format([[
+announcers.notification = announcers.notify
+function announcers.alert(message, subtitle)
+	hs.osascript.javascript([[
 Application("Photos").includeStandardAdditions = true;
-Application("Photos").displayAlert('Apple Photos', {
-	message: %s,
-	as: "informational",
-	buttons: ["OK","Dismiss"],
-	defaultButton: "OK",
-	cancelButton: "Dismiss", // so escape key closes the alert too!
-	givingUpAfter: 5
-})]], hs.json.encode{ message }:sub(2, -2)))
+Application("Photos").displayAlert(
+	'Apple Photos', {
+		message: ]] .. hs.json.encode{ message }:sub(2, -2) .. [[,
+		as: "informational",
+		buttons: ["OK","Dismiss"],
+		defaultButton: "OK", // so return key closes alert
+		cancelButton: "Dismiss", // so escape key closes it too
+		givingUpAfter: 5
+	}
+);]]
+	)
+end
+
+---@return string non-empty when trimmed string leaves non-whitespace characters
+---@return nil empty there is nothing but empty space
+local function trimmedNonEmpty(s)
+	return (s and s:match'^%s*([^%s].-)%s*$')
 end
 
 function Photos:altText(mediaItem)
-	return mediaItem.name
-	    or mediaItem.description
+	return trimmedNonEmpty(mediaItem.name)
+	    or trimmedNonEmpty(mediaItem.description)
 	    or mediaItem.keywords and mediaItem.keywords[1]
 	    or mediaItem.filename:gsub('%..*', '')
 end
 
--- The server only looks at the first 32 characters of the url,
--- expected the uuid. I've included date and basefilename, because
--- the mediaItem can be found with a search in case the UUIDs change.
---
--- This should sort chronologically, grouped by day/camera.
---
--- When the server can't find a uuid, it uses it as a search query,
--- after replacing all . and ~ chatacters with spaces.
---
--- I've removed the extension from the filename because Apple Photos
--- converts formats on export, so the extension may not be accurate.
--- combined with the date,
-local function urlByIdDateFile(self, mediaItem)
-	return (self.origin or '.')                -- cwd if no origin
-	    .. '/' .. mediaItem.id:gsub('/.*$', '') -- drop uuid labels
-	    .. '/' .. os.date('%Y-%m-%d', mediaItem.date) -- no time
-	    .. '.' ..
-	    mediaItem.filename:gsub('%.[^.]*$', '') -- no extension
+---@param filename string
+---@return string trimmed-filename
+function Photos:trimFilename(filename)
+	for _, prefix in ipairs(Photos.imagePrexixes) do
+		if filename:sub(1, #prefix) == prefix then
+			filename = filename:sub(#prefix + 1)
+			break
+		end
+	end
+	return (filename:gsub('%.[^.]*$', '')) -- remove extension
 end
 
--- another option for url-generation, without using UUIDs.
--- it's almost as fast to search Photos for date and filename
--- as it is to fetch by uuid.
-local function urlByDateFile(self, mediaItem)
-	return (self.origin or '.')                -- cwd if no origin
-	    .. '/' .. os.date('%Y-%m-%d', mediaItem.date) -- no time
-	    .. '.' ..
-	    mediaItem.filename:gsub('%.[^.]*$', ''):gsub('^[A-Z]+_', '')
+--- Return the url for a mediaItem
+---
+--- If we have a location, date, and utility to calculate the local
+--- date at that location, we use that to generate one version of the utl.
+--- If we don't have that, then we generate a url that doesn't depend on the date.
+---
+--- The server tries to find the media item from the first url path component.
+--- It first tries to get it by uuid, using the first 32 characters of the component.
+--- If that fails, it uses the component to do a search, after
+--- replacing . ~ and + characters with spaces.
+---
+--- Ideally, I'd like the url path as "<YYYY-MM-DD>.<FILENAME_FRAGMENT>"
+--- where the filename has had it's extension and prefix removed.
+--- This should sort chronologically, grouped by day/camera.
+---
+--- Before using that though, I need to check it returns a unique result.
+--- If it doesn't find anything, try the days before and after because of UTC.
+---
+--- If the query is still ambiguous (or turns up nothing), use the UUID
+--- with the date and filename fragment appended.
+---
+function Photos:url(mediaItem, useShortUrls)
+	if useShortUrls == nil then useShortUrls = Photos.useShortUrls end
+	local confirmed_search
+	local trimmed_filename = self:trimFilename(
+		mediaItem.filename
+	)
+	if useShortUrls then
+		local epoch_milliseconds = mediaItem.date * 1000
+		confirmed_search = self.jxa([[
+filename = "]] .. trimmed_filename .. [[";
+date = new Date(]] .. epoch_milliseconds .. [[);
+unique = (q) => (search(q).length == 1 ? q : null);
+query = (d, w) => `${d.toISOString().slice(0, 10)} ${w}`;
+good = unique(query(date, filename));
+if (!good) {
+date.setDate(date.getDate() - 1);
+good = unique(query(date, filename));
+if (!good) {
+date.setDate(date.getDate() + 2);
+good = unique(query(date, filename));
+}
+}
+good.replace(/ /g, '.');
+]]
+		)
+	end
+	local url = (self.origin or '.') .. '/' .. (
+		confirmed_search and confirmed_search or (
+			mediaItem.id:gsub('/.*$', '') -- drop uuid labels
+			.. '/' .. os.date('%Y-%m-%d', mediaItem.date) -- no time
+			.. '.' .. trimmed_filename)
+	)
+	return url
 end
 
-Photos.url = urlByDateFile
-
-function Photos:toMarkdown(mediaItem)
+function Photos:toMarkdown(mediaItem, useShortUrls)
 	local alt = self:altText(mediaItem)
-	local url = self:url(mediaItem)
-	return '![' .. alt .. '](' .. url .. ')'
+	local url = self:url(mediaItem, useShortUrls)
+	local markdown = '![' .. alt .. '](' .. url .. ')'
+	print(markdown)
+	return markdown
 end
 
 -- alias this so we can annotate it
@@ -157,13 +207,13 @@ try{
 	)
 	if not result then
 		print('cannot open ' .. identifier)
-		announce[self.announce]('Cannot open ' .. identifier)
+		announcers[self.announce]('Cannot open ' .. identifier)
 	end
 	return result
 end
 
 ---@rerturn integer? number of items copied, nil on error
-function Photos:copySelectionAsMarkdown()
+function Photos:copySelectionAsMarkdown(useShortUrls)
 	local selection = self:selectionProperties()
 	if selection == nil then return nil end
 	if #selection > 0 then
@@ -171,24 +221,26 @@ function Photos:copySelectionAsMarkdown()
 			imap(selection,
 				function (item)
 					return self:toMarkdown(
-						item)
+						item, useShortUrls)
 				end), '\n'
 		))
-		announce[self.announce](string.format(
+		announcers[self.announce](string.format(
 			'Copied %d %s to clipboard.',
 			#selection,
 			#selection == 1 and 'markdown link' or
 			'markdown links'
 		))
 	else
-		announce[self.announce]'Nothing selected to copy.'
+		announcers[self.announce]'Nothing selected to copy.'
 	end
 	return #selection
 end
 
-function Photos:Init() return self end
+function Photos:Init()
+	hs.spoons.resourcePath'regional-time'
 
-function Photos:Start() return self end
+	return self
+end
 
 function Photos:Stop() return self end
 
@@ -196,11 +248,43 @@ function Photos:Stop() return self end
 -- when photosApplication is moved to its own spoon
 ---@param mapping table
 ---@return PhotosServer
+
+Photos.hotkeys = {}
+
 function Photos:bindHotkeys(mapping)
 	local spec = {
-		copyMarkdown = self.copySelectionAsMarkdown,
+		copyMarkdown = function () self:copySelectionAsMarkdown() end,
 	}
-	hs.spoons.bindHotkeysToSpec(spec, mapping)
+	-- Create the hotkeys one at a time so we can add them to our list
+	for name, mods_key in pairs(mapping) do
+		if spec[name] then
+			table.insert(
+				self.hotkeys,
+				hs.hotkey.new(
+					mods_key[1], mods_key[2],
+					spec[name]
+				)
+			)
+		end
+	end
+	return self
+end
+
+function Photos:start()
+	-- Create the window filter for the Photos app
+	self.filter = hs.window.filter.new'Photos'
+	self.filter:subscribe(
+		hs.window.filter.windowFocused,
+		function ()
+			for _, hk in pairs(self.hotkeys) do hk:enable() end
+		end
+	)
+	self.filter:subscribe(
+		hs.window.filter.windowUnfocused,
+		function ()
+			for _, hk in pairs(self.hotkeys) do hk:disable() end
+		end
+	)
 	return self
 end
 
